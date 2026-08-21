@@ -44,7 +44,9 @@ def test_list_repositories():
     data = response.json()
     assert isinstance(data, list)
     assert len(data) >= 1
-    assert data[0]["name"] == "checkout-api"
+    # Ordered newest-first, so assert the seeded repo is present rather than
+    # first: registering any repository would otherwise break this test.
+    assert any(r["name"] == "checkout-api" for r in data)
 
 
 def test_list_investigations():

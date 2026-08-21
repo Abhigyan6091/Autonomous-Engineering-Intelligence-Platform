@@ -125,3 +125,4 @@ Desktop.ini
 # start.sh runtime state (pids, logs, chosen backend URL)
 .run/
 *.db.orphaned-*
+git_workspaces/

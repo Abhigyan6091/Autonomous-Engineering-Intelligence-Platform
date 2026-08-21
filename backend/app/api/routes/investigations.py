@@ -25,12 +25,87 @@ logger = structlog.get_logger(__name__)
 router = APIRouter()
 
 
+async def _prepare_workspace(investigation_id: str) -> None:
+    """
+    Make the target repository available on disk before agents run.
+
+    A repository registered by URL has no local checkout, so clone it and
+    point the investigation's workspace_path at the result. Tools read code
+    from that directory; without this they would silently analyse whatever
+    the default path happens to contain.
+    """
+    from app.db.database import AsyncSessionLocal
+    from app.db.models import Repository
+    from app.services.repository_service import (
+        RepositoryError,
+        ensure_local_checkout,
+    )
+
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(
+            select(Investigation).where(Investigation.id == investigation_id)
+        )
+        inv = result.scalar_one_or_none()
+        if not inv:
+            return
+
+        metadata = dict(inv.metadata_ or {})
+        repo_id = metadata.get("repository_id")
+        if not repo_id:
+            return
+
+        repo_result = await db.execute(
+            select(Repository).where(Repository.id == repo_id)
+        )
+        repo = repo_result.scalar_one_or_none()
+        if not repo:
+            logger.warning(
+                "Target repository not found",
+                investigation_id=investigation_id,
+                repository_id=repo_id,
+            )
+            return
+
+        if repo.local_path:
+            # Already on disk; use it verbatim.
+            metadata["workspace_path"] = repo.local_path
+        elif repo.url:
+            await _emit_workspace_event(investigation_id, "workspace.cloning", {
+                "url": repo.url,
+            })
+            path = await ensure_local_checkout(repo.id, repo.url, repo.branch or "main")
+            metadata["workspace_path"] = path
+            repo.local_path = path
+            await _emit_workspace_event(investigation_id, "workspace.ready", {
+                "path": path,
+            })
+        else:
+            raise RepositoryError("Repository has neither a URL nor a local path")
+
+        inv.metadata_ = metadata
+        await db.commit()
+
+
+async def _emit_workspace_event(
+    investigation_id: str, event_type: str, payload: dict
+) -> None:
+    """Surface checkout progress on the live event stream."""
+    try:
+        from app.graph.graph import _emit_event
+
+        await _emit_event(investigation_id, event_type, payload)
+    except Exception:
+        pass
+
+
 async def _launch_investigation(investigation_id: str) -> None:
     """
     Background task: launch the LangGraph investigation workflow.
     This runs asynchronously after the investigation is created.
     """
     try:
+        await _prepare_workspace(investigation_id)
+
         from app.graph.graph import run_investigation
         await run_investigation(investigation_id)
     except Exception as exc:
@@ -98,6 +173,10 @@ async def create_investigation(
         mode=investigation.mode,
         user=user_id,
     )
+
+    # Commit before scheduling: the background task opens its own session and
+    # would not see an uncommitted row ("Investigation not found").
+    await db.commit()
 
     # Launch the LangGraph workflow in the background
     background_tasks.add_task(_launch_investigation, investigation.id)

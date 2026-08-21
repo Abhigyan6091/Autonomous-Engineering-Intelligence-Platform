@@ -138,7 +138,8 @@ export default function DashboardPage() {
             // Target the selected repository; the agents read the workspace
             // from here, so this is what scopes the investigation.
             repository_id: selectedRepo?.id,
-            workspace_path: selectedRepo?.local_path ?? "./demo_repo/checkout-api",
+            // Omitted for URL-only repos: the backend clones and fills this in.
+            workspace_path: selectedRepo?.local_path ?? undefined,
             repository_url: selectedRepo?.url ?? undefined,
             branch: selectedRepo?.branch,
             service_name: selectedRepo?.name ?? "checkout-api",
