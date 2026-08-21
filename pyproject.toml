@@ -1,0 +1,161 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.backends.legacy:build"
+
+[project]
+name = "aeip-backend"
+version = "0.1.0"
+description = "Autonomous Engineering Intelligence Platform — Backend"
+requires-python = ">=3.12"
+license = { text = "MIT" }
+
+dependencies = [
+    # Web framework
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.30.0",
+    "python-multipart>=0.0.9",
+    "httpx>=0.27.0",
+    "sse-starlette>=2.1.0",
+
+    # Pydantic / settings
+    "pydantic>=2.9.0",
+    "pydantic-settings>=2.5.0",
+    "email-validator>=2.2.0",
+
+    # Database / ORM
+    "sqlalchemy[asyncio]>=2.0.36",
+    "alembic>=1.13.0",
+    "asyncpg>=0.29.0",           # PostgreSQL async driver
+    "aiosqlite>=0.20.0",         # SQLite async driver (dev fallback)
+    "psycopg2-binary>=2.9.9",    # Alembic sync operations
+
+    # Cache / Queue
+    "redis[hiredis]>=5.0.0",
+    "fakeredis>=2.23.0",         # In-memory Redis for local dev
+
+    # Agent orchestration
+    "langgraph>=0.2.0",
+    "langgraph-checkpoint-postgres>=2.0.0",
+    "langchain>=0.3.0",
+    "langchain-core>=0.3.0",
+    "langchain-openai>=0.2.0",
+    "langchain-anthropic>=0.3.0",
+    "langchain-google-genai>=2.0.0",
+    "langchain-ollama>=0.2.0",
+
+    # Vector database
+    "qdrant-client>=1.9.0",
+
+    # Embeddings
+    "openai>=1.51.0",            # For embeddings even if not using OpenAI for chat
+    "tiktoken>=0.7.0",
+
+    # Object storage
+    "boto3>=1.35.0",
+    "aioboto3>=13.0.0",
+
+    # Git operations
+    "gitpython>=3.1.43",
+
+    # Code analysis
+    "ruff>=0.6.0",
+    "bandit>=1.7.10",
+    "pygments>=2.18.0",
+
+    # Observability
+    "opentelemetry-api>=1.27.0",
+    "opentelemetry-sdk>=1.27.0",
+    "opentelemetry-instrumentation-fastapi>=0.48b0",
+    "opentelemetry-instrumentation-sqlalchemy>=0.48b0",
+    "opentelemetry-instrumentation-redis>=0.48b0",
+    "opentelemetry-exporter-otlp-proto-grpc>=1.27.0",
+    "prometheus-client>=0.21.0",
+    "prometheus-fastapi-instrumentator>=7.0.0",
+    "structlog>=24.4.0",
+
+    # Security
+    "python-jose[cryptography]>=3.3.0",
+    "passlib[bcrypt]>=1.7.4",
+    "cryptography>=43.0.0",
+
+    # Utilities
+    "python-dateutil>=2.9.0",
+    "rich>=13.8.0",
+    "tenacity>=9.0.0",           # Retry logic
+    "orjson>=3.10.0",
+    "python-dotenv>=1.0.0",
+    "anyio>=4.6.0",
+    "aiofiles>=24.1.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3.0",
+    "pytest-asyncio>=0.24.0",
+    "pytest-cov>=5.0.0",
+    "pytest-mock>=3.14.0",
+    "httpx>=0.27.0",             # For TestClient
+    "mypy>=1.12.0",
+    "types-python-dateutil",
+    "types-redis",
+    "ipython>=8.28.0",
+    "factory-boy>=3.3.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["backend"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+fix = true
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort
+    "N",   # pep8-naming
+    "UP",  # pyupgrade
+    "B",   # flake8-bugbear
+    "SIM", # flake8-simplify
+    "TCH", # flake8-type-checking
+    "ANN", # flake8-annotations (subset)
+    "S",   # flake8-bandit (security)
+    "LOG", # flake8-logging
+]
+ignore = [
+    "ANN101", "ANN102",  # Missing type annotation for self/cls
+    "S101",              # Use of assert (allowed in tests)
+    "B008",              # Do not perform function calls in default arguments (FastAPI pattern)
+]
+
+[tool.ruff.lint.per-file-ignores]
+"backend/tests/**" = ["S", "ANN"]
+"scripts/**" = ["S", "ANN", "T201"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = false
+warn_return_any = true
+warn_unused_configs = true
+ignore_missing_imports = true
+plugins = ["pydantic.mypy"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["backend/tests"]
+python_files = ["test_*.py", "*_test.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = "--tb=short -v"
+
+[tool.coverage.run]
+source = ["backend/app"]
+omit = ["*/tests/*", "*/migrations/*"]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = false
+fail_under = 70

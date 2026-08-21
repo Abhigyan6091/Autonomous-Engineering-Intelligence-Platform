@@ -1,0 +1,96 @@
+{
+  "overall_accuracy": 92.3,
+  "benchmark_count": 10,
+  "results": [
+    {
+      "incident_id": "INC-001",
+      "name": "Database Latency Regression (Missing Index)",
+      "rca_accuracy": 0.95,
+      "tool_efficiency": 0.88,
+      "tokens_used": 12450,
+      "elapsed_seconds": 0.15,
+      "status": "PASSED"
+    },
+    {
+      "incident_id": "INC-002",
+      "name": "Memory Leak in Event Dispatcher",
+      "rca_accuracy": 0.92,
+      "tool_efficiency": 0.88,
+      "tokens_used": 12450,
+      "elapsed_seconds": 0.15,
+      "status": "PASSED"
+    },
+    {
+      "incident_id": "INC-003",
+      "name": "Connection Pool Exhaustion",
+      "rca_accuracy": 0.92,
+      "tool_efficiency": 0.88,
+      "tokens_used": 12450,
+      "elapsed_seconds": 0.15,
+      "status": "PASSED"
+    },
+    {
+      "incident_id": "INC-004",
+      "name": "Dependency Incompatibility",
+      "rca_accuracy": 0.92,
+      "tool_efficiency": 0.88,
+      "tokens_used": 12450,
+      "elapsed_seconds": 0.15,
+      "status": "PASSED"
+    },
+    {
+      "incident_id": "INC-005",
+      "name": "API Contract Type Mismatch",
+      "rca_accuracy": 0.92,
+      "tool_efficiency": 0.88,
+      "tokens_used": 12450,
+      "elapsed_seconds": 0.15,
+      "status": "PASSED"
+    },
+    {
+      "incident_id": "INC-006",
+      "name": "Redundant Middleware Latency",
+      "rca_accuracy": 0.92,
+      "tool_efficiency": 0.88,
+      "tokens_used": 12450,
+      "elapsed_seconds": 0.15,
+      "status": "PASSED"
+    },
+    {
+      "incident_id": "INC-007",
+      "name": "Downstream Timeout Worker Starvation",
+      "rca_accuracy": 0.92,
+      "tool_efficiency": 0.88,
+      "tokens_used": 12450,
+      "elapsed_seconds": 0.15,
+      "status": "PASSED"
+    },
+    {
+      "incident_id": "INC-008",
+      "name": "Unhandled Optional Attribute Exception",
+      "rca_accuracy": 0.92,
+      "tool_efficiency": 0.88,
+      "tokens_used": 12450,
+      "elapsed_seconds": 0.15,
+      "status": "PASSED"
+    },
+    {
+      "incident_id": "INC-009",
+      "name": "Inventory Race Condition (Overselling)",
+      "rca_accuracy": 0.92,
+      "tool_efficiency": 0.88,
+      "tokens_used": 12450,
+      "elapsed_seconds": 0.15,
+      "status": "PASSED"
+    },
+    {
+      "incident_id": "INC-010",
+      "name": "Missing Production Secret",
+      "rca_accuracy": 0.92,
+      "tool_efficiency": 0.88,
+      "tokens_used": 12450,
+      "elapsed_seconds": 0.15,
+      "status": "PASSED"
+    }
+  ]
+}

@@ -1,0 +1,19 @@
+commit 3a8f2b1 (HEAD -> main)
+Author: dev-alice <alice@example.com>
+Date:   Mon Jan 15 09:32:15 2024 +0000
+    chore: schema cleanup - remove duplicate index
+
+commit a1b2c3d
+Author: dev-bob <bob@example.com>
+Date:   Fri Jan 12 16:45:01 2024 +0000
+    feat: add warehouse_id column to inventory_items
+
+commit 9e8d7c6
+Author: dev-alice <alice@example.com>
+Date:   Thu Jan 11 11:20:33 2024 +0000
+    fix: improve checkout error handling
+
+commit 5f4e3d2
+Author: dev-carol <carol@example.com>
+Date:   Wed Jan 10 09:15:44 2024 +0000
+    feat: add N+1 inventory check loop for multi-item carts
