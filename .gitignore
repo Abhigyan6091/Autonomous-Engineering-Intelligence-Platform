@@ -10,8 +10,8 @@ dist/
 downloads/
 eggs/
 .eggs/
-lib/
-lib64/
+/lib/
+/lib64/
 parts/
 sdist/
 var/
@@ -83,6 +83,9 @@ frontend/out/
 # Build artifacts
 *.log
 logs/
+!backend/app/tools/logs/
+!demo_repo/**/logs/
+!demo_repo/**/*.log
 *.pid
 *.seed
 *.pid.lock

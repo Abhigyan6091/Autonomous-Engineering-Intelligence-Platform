@@ -29,6 +29,16 @@ from app.graph.state import AgentState, BudgetState, PlannedTask
 
 logger = structlog.get_logger(__name__)
 
+# Specialist agent nodes available for dynamic fan-out. Must match the
+# node names registered on the graph in build_graph().
+VALID_AGENT_NODES = [
+    "code_agent",
+    "log_agent",
+    "test_agent",
+    "metrics_agent",
+    "research_agent",
+]
+
 
 # =============================================================================
 # Graph Nodes
@@ -107,33 +117,127 @@ async def planner_node(state: AgentState) -> dict[str, Any]:
         }
 
 
-async def route_tasks_node(state: AgentState) -> list[Any]:
+def route_tasks(state: AgentState) -> list[Any]:
     """
-    Node: Fan-out tasks to specialized agents using LangGraph Send.
+    Conditional-edge router: fan-out tasks to specialized agents via Send.
 
-    This is the key parallelization node. It dynamically creates Send
-    objects for each pending task, allowing them to execute in parallel.
+    This must be a routing function (not a node): LangGraph only accepts a
+    list of Send objects from a conditional edge. Returning them from a node
+    raises InvalidUpdateError("Expected dict, got [Send(...)]").
     """
     from langgraph.types import Send
+
+    if isinstance(state, dict):
+        state = AgentState.model_validate(state)
 
     pending_tasks = [t for t in state.planned_tasks if t.status == "pending"]
 
     if not pending_tasks:
         logger.warning("No pending tasks to route", investigation_id=state.investigation_id)
-        return []
+        # With no work to fan out, skip straight to merging what we have.
+        return ["evidence_merge"]
 
     # Create parallel sends for all pending tasks
     sends = []
     for task in pending_tasks:
-        agent_node = f"{task.assigned_agent}_node"
+        # Node names are registered without a "_node" suffix.
+        agent_node = task.assigned_agent
+        if agent_node not in VALID_AGENT_NODES:
+            logger.warning(
+                "Unknown agent for task, skipping",
+                task_id=task.task_id,
+                agent=task.assigned_agent,
+            )
+            continue
         sends.append(Send(agent_node, {**state.model_dump(), "active_task_id": task.task_id}))
         logger.info(
             "Task routed",
             task_id=task.task_id,
-            agent=task.assigned_agent,
+            agent=agent_node,
         )
 
+    if not sends:
+        logger.warning(
+            "No task matched a known agent",
+            investigation_id=state.investigation_id,
+        )
+        return ["evidence_merge"]
+
     return sends
+
+
+async def _run_agent(
+    state: AgentState, agent: Any, agent_name: str
+) -> dict[str, Any]:
+    """
+    Execute one specialist agent and fold its evidence back into the graph state.
+
+    Agent nodes run concurrently via Send fan-out, so this returns only the
+    keys this agent owns. `evidence` uses a merging reducer, so the returned
+    list is the agent's new evidence, not the full set.
+    """
+    # Nodes reached through Send receive the raw payload dict rather than the
+    # graph's state model, so coerce before touching attributes.
+    if isinstance(state, dict):
+        state = AgentState.model_validate(state)
+
+    task_id = state.active_task_id
+    await _emit_event(state.investigation_id, "agent.started", {
+        "agent": agent_name,
+        "task_id": task_id,
+    })
+    await _update_task_db(task_id, {"status": "running", "started_at": datetime.now(UTC)})
+
+    try:
+        items = await agent.run(state)
+    except Exception as exc:
+        logger.error(
+            "Agent failed",
+            investigation_id=state.investigation_id,
+            agent=agent_name,
+            task_id=task_id,
+            error=str(exc),
+            exc_info=True,
+        )
+        await _update_task_db(
+            task_id,
+            {"status": "failed", "error": str(exc), "completed_at": datetime.now(UTC)},
+        )
+        await _emit_event(state.investigation_id, "agent.failed", {
+            "agent": agent_name,
+            "task_id": task_id,
+            "error": str(exc),
+        })
+        # One agent failing must not abort the investigation; the remaining
+        # agents' evidence still flows to evidence_merge.
+        return {"evidence": []}
+
+    items = list(items or [])
+    for item in items:
+        item.provenance = {**(item.provenance or {}), "agent": agent_name, "task_id": task_id}
+
+    await _save_evidence_to_db(state.investigation_id, items)
+    await _update_task_db(
+        task_id, {"status": "completed", "completed_at": datetime.now(UTC)}
+    )
+    await _emit_event(state.investigation_id, "agent.completed", {
+        "agent": agent_name,
+        "task_id": task_id,
+        "evidence_count": len(items),
+    })
+
+    logger.info(
+        "Agent completed",
+        investigation_id=state.investigation_id,
+        agent=agent_name,
+        task_id=task_id,
+        evidence_count=len(items),
+    )
+
+    # Only `evidence` is returned here. Agent nodes run concurrently, and keys
+    # without a reducer (planned_tasks, budget) reject concurrent writes with
+    # InvalidUpdateError; task status is tracked on the Task rows instead.
+    return {"evidence": items}
 
 
 async def code_agent_node(state: AgentState) -> dict[str, Any]:
@@ -191,8 +295,17 @@ async def evidence_merge_node(state: AgentState) -> dict[str, Any]:
         "unique": len(unique_evidence),
     })
 
+    # Agent nodes cannot write planned_tasks (concurrent writes to a key with
+    # no reducer), so the dispatched tasks are marked done here, after fan-in.
+    completed_tasks = [
+        t.model_copy(update={"status": "completed"}) if t.status == "pending" else t
+        for t in state.planned_tasks
+    ]
+
+    # The `evidence` reducer already merges by id, so re-emitting the list
+    # here would be a no-op; only the phase and task statuses advance.
     return {
-        "evidence": unique_evidence,
+        "planned_tasks": completed_tasks,
         "current_phase": "hypothesis_generation",
     }
 
@@ -450,7 +563,6 @@ def build_investigation_graph() -> StateGraph:
     # ── Add all nodes ──────────────────────────────────────────────────────
     graph.add_node("initialize", initialize_investigation_node)
     graph.add_node("planner", planner_node)
-    graph.add_node("route_tasks", route_tasks_node)
 
     # Specialized agent nodes
     graph.add_node("code_agent", code_agent_node)
@@ -478,9 +590,13 @@ def build_investigation_graph() -> StateGraph:
     # ── Linear edges ───────────────────────────────────────────────────────
     graph.add_edge(START, "initialize")
     graph.add_edge("initialize", "planner")
-    graph.add_edge("planner", "route_tasks")
+    # planner → parallel agents (via Send, dynamic fan-out)
+    graph.add_conditional_edges(
+        "planner",
+        route_tasks,
+        VALID_AGENT_NODES + ["evidence_merge"],
+    )
 
-    # route_tasks → parallel agents (via Send, dynamic fan-out)
     # All parallel agents → evidence_merge
     for agent_node in ["code_agent", "log_agent", "test_agent", "metrics_agent", "research_agent"]:
         graph.add_edge(agent_node, "evidence_merge")
@@ -675,6 +791,54 @@ async def _emit_event(
             await db.commit()
     except Exception as exc:
         logger.error("Failed to emit event", error=str(exc))
+
+
+async def _update_task_db(task_id: str | None, updates: dict[str, Any]) -> None:
+    """Update a task row; no-op when the task was never persisted."""
+    if not task_id:
+        return
+    from sqlalchemy import select
+
+    from app.db.database import AsyncSessionLocal
+    from app.db.models import Task
+
+    try:
+        async with AsyncSessionLocal() as db:
+            result = await db.execute(select(Task).where(Task.id == task_id))
+            task = result.scalar_one_or_none()
+            if not task:
+                return
+            for key, value in updates.items():
+                setattr(task, key, value)
+            await db.commit()
+    except Exception as exc:
+        logger.error("Failed to update task", task_id=task_id, error=str(exc))
+
+
+async def _save_evidence_to_db(investigation_id: str, items: list) -> None:
+    """Persist evidence items gathered by an agent."""
+    if not items:
+        return
+    from app.db.database import AsyncSessionLocal
+    from app.db.models import Evidence
+
+    try:
+        async with AsyncSessionLocal() as db:
+            for item in items:
+                db.add(Evidence(
+                    id=item.id,
+                    investigation_id=investigation_id,
+                    source_type=item.source_type,
+                    source=item.source,
+                    content=item.content,
+                    summary=item.summary,
+                    quality_score=item.quality_score,
+                    tool_execution_id=item.tool_execution_id,
+                    provenance=item.provenance or {},
+                ))
+            await db.commit()
+    except Exception as exc:
+        logger.error("Failed to save evidence to DB", error=str(exc))
 
 
 async def _save_tasks_to_db(investigation_id: str, tasks: list[PlannedTask]) -> None:

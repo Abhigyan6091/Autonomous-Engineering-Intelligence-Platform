@@ -1,5 +1,7 @@
 "use client";
 
+import { apiUrl } from "@/lib/api";
+
 import React, { useState } from "react";
 import Link from "next/link";
 import { Navbar } from "@/components/Navbar";
@@ -36,7 +38,7 @@ export default function AuditSuitePage() {
   async function handleLaunchAudit() {
     setSubmitting(true);
     try {
-      const res = await fetch("http://localhost:8000/api/v1/investigations", {
+      const res = await fetch(apiUrl("/api/v1/investigations"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

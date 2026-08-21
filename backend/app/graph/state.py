@@ -31,6 +31,22 @@ class EvidenceItem(BaseModel):
     provenance: dict[str, Any] = Field(default_factory=dict)
 
 
+def merge_evidence(
+    left: list["EvidenceItem"], right: list["EvidenceItem"]
+) -> list["EvidenceItem"]:
+    """
+    Reducer for evidence gathered by concurrently fanned-out agent nodes.
+
+    Agent nodes run in parallel and each returns only its own items, so
+    updates must accumulate rather than overwrite. Items are keyed by id so a
+    replayed or checkpoint-resumed node cannot duplicate its evidence.
+    """
+    merged: dict[str, EvidenceItem] = {item.id: item for item in left}
+    for item in right:
+        merged[item.id] = item
+    return list(merged.values())
+
+
 class HypothesisItem(BaseModel):
     """A hypothesis about the root cause."""
     id: str
@@ -151,7 +167,7 @@ class AgentState(BaseModel):
     active_task_id: str | None = None
 
     # ── Evidence ───────────────────────────────────────────────────────────────
-    evidence: list[EvidenceItem] = Field(default_factory=list)
+    evidence: Annotated[list[EvidenceItem], merge_evidence] = Field(default_factory=list)
 
     # ── Hypotheses ─────────────────────────────────────────────────────────────
     hypotheses: list[HypothesisItem] = Field(default_factory=list)

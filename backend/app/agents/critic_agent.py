@@ -60,6 +60,40 @@ def _confidence_tier(c: float) -> str:
     return "weak"
 
 
+_VALID_STATUSES = {"open", "supported", "rejected", "inconclusive"}
+
+# Models reach for words outside the allowed set ("downgraded", "weakened",
+# "confirmed"); map the common ones rather than dropping the critique.
+_STATUS_ALIASES = {
+    "confirmed": "supported",
+    "validated": "supported",
+    "accepted": "supported",
+    "supported_by_evidence": "supported",
+    "downgraded": "inconclusive",
+    "weakened": "inconclusive",
+    "uncertain": "inconclusive",
+    "unclear": "inconclusive",
+    "unknown": "inconclusive",
+    "refuted": "rejected",
+    "disproven": "rejected",
+    "contradicted": "rejected",
+    "invalidated": "rejected",
+    "pending": "open",
+    "unresolved": "open",
+}
+
+
+def _normalize_status(raw: str, fallback: str) -> str:
+    """Coerce an LLM-supplied hypothesis status into the allowed literals."""
+    value = (raw or "").strip().lower().replace("-", "_").replace(" ", "_")
+    if value in _VALID_STATUSES:
+        return value
+    if value in _STATUS_ALIASES:
+        return _STATUS_ALIASES[value]
+    logger.warning("Unrecognized hypothesis status from critic", status=raw)
+    return fallback
+
+
 class CriticAgent:
     """Reviews hypotheses for logical soundness and evidence quality."""
 
@@ -97,7 +131,7 @@ class CriticAgent:
                     h = h.model_copy(update={
                         "confidence": critique.adjusted_confidence,
                         "confidence_tier": _confidence_tier(critique.adjusted_confidence),
-                        "status": critique.status,
+                        "status": _normalize_status(critique.status, h.status),
                         "critique_notes": critique.critique,
                     })
                 updated.append(h)

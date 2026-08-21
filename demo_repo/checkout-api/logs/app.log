@@ -1,0 +1,15 @@
+2024-01-15 11:58:02 INFO  Application started version=1.3.2
+2024-01-15 12:00:01 INFO  POST /api/v1/checkout duration_ms=45 status=200
+2024-01-15 12:01:15 INFO  POST /api/v1/checkout duration_ms=48 status=200
+2024-01-15 12:31:42 INFO  Deployment completed commit=3a8f2b1 version=1.3.3
+2024-01-15 12:32:01 INFO  POST /api/v1/checkout duration_ms=187 status=200
+2024-01-15 12:33:14 WARNING POST /api/v1/checkout duration_ms=253 status=200 SLOW_REQUEST
+2024-01-15 12:34:22 WARNING POST /api/v1/checkout duration_ms=284 status=200 SLOW_REQUEST
+2024-01-15 12:35:08 ERROR  POST /api/v1/checkout duration_ms=502 status=500
+2024-01-15 12:35:08 ERROR  sqlalchemy.exc.OperationalError: database is locked
+2024-01-15 12:36:01 WARNING POST /api/v1/checkout duration_ms=298 status=200 SLOW_REQUEST
+2024-01-15 12:37:45 ERROR  POST /api/v1/checkout duration_ms=610 status=500
+2024-01-15 12:37:45 ERROR  Traceback (most recent call last):
+2024-01-15 12:37:45 ERROR    File "app/services/checkout_service.py", line 12, in process_checkout
+2024-01-15 12:37:45 ERROR    inventory = db.query(InventoryItem).filter(InventoryItem.product_id == item.product_id).first()
+2024-01-15 12:37:45 ERROR  sqlalchemy.orm.exc.DetachedInstanceError: Instance <InventoryItem at 0x7f3a2b1c4d90> is not bound to a Session

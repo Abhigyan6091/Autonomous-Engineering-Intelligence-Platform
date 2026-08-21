@@ -1,5 +1,7 @@
 "use client";
 
+import { apiUrl } from "@/lib/api";
+
 import React, { useEffect, useState } from "react";
 import Link from "next/link";
 import { Navbar } from "@/components/Navbar";
@@ -27,7 +29,7 @@ export default function ApprovalsPage() {
 
   async function fetchApprovals() {
     try {
-      const res = await fetch("http://localhost:8000/api/v1/approvals");
+      const res = await fetch(apiUrl("/api/v1/approvals"));
       if (res.ok) {
         setApprovals(await res.json());
       }
@@ -42,7 +44,7 @@ export default function ApprovalsPage() {
     if (!selectedApproval) return;
     setSubmitting(true);
     try {
-      await fetch(`http://localhost:8000/api/v1/approvals/${selectedApproval.id}/${decision}`, {
+      await fetch(apiUrl(`/api/v1/approvals/${selectedApproval.id}/${decision}`), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ notes }),

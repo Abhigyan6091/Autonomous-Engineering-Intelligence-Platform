@@ -1,5 +1,7 @@
 "use client";
 
+import { apiUrl } from "@/lib/api";
+
 import React, { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
@@ -22,7 +24,7 @@ export function Navbar() {
   useEffect(() => {
     async function checkStatus() {
       try {
-        const res = await fetch("http://localhost:8000/health");
+        const res = await fetch(apiUrl("/health"));
         if (res.ok) {
           const data = await res.json();
           setHealth(data.status || "healthy");
@@ -34,7 +36,7 @@ export function Navbar() {
       }
 
       try {
-        const appRes = await fetch("http://localhost:8000/api/v1/approvals");
+        const appRes = await fetch(apiUrl("/api/v1/approvals"));
         if (appRes.ok) {
           const apps = await appRes.json();
           setPendingApprovals(apps.length);

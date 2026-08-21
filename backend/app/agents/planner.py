@@ -142,8 +142,11 @@ class PlannerAgent:
                 )
                 schema.assigned_agent = "research_agent"
 
+            # The model's task_id is a plan-local label ("1", "task_2", and
+            # sometimes malformed fragments). Task ids are database primary
+            # keys, so always assign a real unique one.
             tasks.append(PlannedTask(
-                task_id=schema.task_id or str(uuid.uuid4()),
+                task_id=str(uuid.uuid4()),
                 assigned_agent=schema.assigned_agent,
                 description=schema.description,
                 objective=schema.objective,

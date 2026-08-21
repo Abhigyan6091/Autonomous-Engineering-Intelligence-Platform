@@ -1,5 +1,7 @@
 "use client";
 
+import { apiUrl } from "@/lib/api";
+
 import React, { useEffect, useState, useRef } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
@@ -54,7 +56,7 @@ export default function InvestigationDetailPage() {
     loadAllData();
 
     // Setup Server-Sent Events (SSE) Stream
-    const eventSource = new EventSource(`http://localhost:8000/api/v1/events/${id}/stream`);
+    const eventSource = new EventSource(apiUrl(`/api/v1/events/${id}/stream`));
 
     eventSource.onmessage = (e) => {
       try {
@@ -86,10 +88,10 @@ export default function InvestigationDetailPage() {
   async function loadAllData() {
     try {
       const [invRes, taskRes, hypRes, evRes] = await Promise.all([
-        fetch(`http://localhost:8000/api/v1/investigations/${id}`),
-        fetch(`http://localhost:8000/api/v1/investigations/${id}/tasks`),
-        fetch(`http://localhost:8000/api/v1/investigations/${id}/hypotheses`),
-        fetch(`http://localhost:8000/api/v1/investigations/${id}/evidence`),
+        fetch(apiUrl(`/api/v1/investigations/${id}`)),
+        fetch(apiUrl(`/api/v1/investigations/${id}/tasks`)),
+        fetch(apiUrl(`/api/v1/investigations/${id}/hypotheses`)),
+        fetch(apiUrl(`/api/v1/investigations/${id}/evidence`)),
       ]);
 
       if (invRes.ok) setInvestigation(await invRes.json());
@@ -99,7 +101,7 @@ export default function InvestigationDetailPage() {
 
       // Attempt to load report if completed
       try {
-        const repRes = await fetch(`http://localhost:8000/api/v1/investigations/${id}/report`);
+        const repRes = await fetch(apiUrl(`/api/v1/investigations/${id}/report`));
         if (repRes.ok) setReport(await repRes.json());
       } catch {
         // report not ready yet
@@ -113,12 +115,12 @@ export default function InvestigationDetailPage() {
     setSubmittingAction(true);
     try {
       // Find pending approval for this investigation
-      const appListRes = await fetch("http://localhost:8000/api/v1/approvals");
+      const appListRes = await fetch(apiUrl("/api/v1/approvals"));
       if (appListRes.ok) {
         const apps = await appListRes.json();
         const targetApp = apps.find((a: any) => a.investigation_id === id);
         if (targetApp) {
-          await fetch(`http://localhost:8000/api/v1/approvals/${targetApp.id}/${decision}`, {
+          await fetch(apiUrl(`/api/v1/approvals/${targetApp.id}/${decision}`), {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ notes: actionNotes }),

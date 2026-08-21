@@ -1,5 +1,7 @@
 "use client";
 
+import { API_BASE_URL, apiUrl } from "@/lib/api";
+
 import React, { useEffect, useState } from "react";
 import Link from "next/link";
 import { Navbar } from "@/components/Navbar";
@@ -57,6 +59,8 @@ export default function DashboardPage() {
   const [mode, setMode] = useState<"incident" | "audit" | "remediation">("incident");
   const [priority, setPriority] = useState<string>("critical");
   const [submitting, setSubmitting] = useState<boolean>(false);
+  const [error, setError] = useState<string | null>(null);
+  const [formError, setFormError] = useState<string | null>(null);
 
   useEffect(() => {
     fetchData();
@@ -67,8 +71,8 @@ export default function DashboardPage() {
   async function fetchData() {
     try {
       const [invRes, findRes] = await Promise.all([
-        fetch("http://localhost:8000/api/v1/investigations"),
-        fetch("http://localhost:8000/api/v1/findings")
+        fetch(apiUrl("/api/v1/investigations")),
+        fetch(apiUrl("/api/v1/findings"))
       ]);
 
       if (invRes.ok) {
@@ -79,8 +83,16 @@ export default function DashboardPage() {
         const findData = await findRes.json();
         setFindings(findData || []);
       }
-    } catch {
-      // ignore
+
+      if (!invRes.ok) {
+        setError(`Backend returned ${invRes.status} for /api/v1/investigations.`);
+      } else {
+        setError(null);
+      }
+    } catch (err) {
+      setError(
+        `Cannot reach the backend at ${API_BASE_URL}. Is it running? (${err instanceof Error ? err.message : String(err)})`
+      );
     } finally {
       setLoading(false);
     }
@@ -92,7 +104,7 @@ export default function DashboardPage() {
 
     setSubmitting(true);
     try {
-      const res = await fetch("http://localhost:8000/api/v1/investigations", {
+      const res = await fetch(apiUrl("/api/v1/investigations"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -111,12 +123,19 @@ export default function DashboardPage() {
         const data = await res.json();
         setIsModalOpen(false);
         setObjective("");
+        setFormError(null);
         fetchData();
         // Redirect to detail page
         window.location.href = `/investigations/${data.id}`;
+      } else {
+        // Surface the backend's reason rather than failing silently.
+        const detail = await res.text();
+        setFormError(`Backend rejected the request (${res.status}): ${detail.slice(0, 300)}`);
       }
     } catch (err) {
-      alert("Failed to launch investigation: " + err);
+      setFormError(
+        `Could not reach the backend at ${API_BASE_URL}. ${err instanceof Error ? err.message : String(err)}`
+      );
     } finally {
       setSubmitting(false);
     }
@@ -171,6 +190,16 @@ export default function DashboardPage() {
             </div>
           </div>
         </div>
+
+        {error && (
+          <div className="rounded-xl border border-rose-500/40 bg-rose-950/40 p-4 flex items-start space-x-3">
+            <AlertCircle className="w-5 h-5 text-rose-400 flex-shrink-0 mt-0.5" />
+            <div className="text-sm">
+              <p className="font-semibold text-rose-200">Backend unreachable</p>
+              <p className="text-rose-300/90 font-mono text-xs mt-1">{error}</p>
+            </div>
+          </div>
+        )}
 
         {/* Live Metrics Cards */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
@@ -368,6 +397,12 @@ export default function DashboardPage() {
                   required
                 />
               </div>
+
+              {formError && (
+                <div className="rounded-lg border border-rose-500/40 bg-rose-950/40 p-3 text-xs font-mono text-rose-300">
+                  {formError}
+                </div>
+              )}
 
               <div className="flex items-center justify-between pt-4 border-t border-slate-800">
                 <button
