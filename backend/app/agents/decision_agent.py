@@ -63,6 +63,56 @@ class FindingSchema(BaseModel):
     evidence_ids: list[str] = Field(default_factory=list)
 
 
+_VALID_SEVERITIES = {"critical", "high", "medium", "low", "info"}
+
+# Models reach for severity words outside the allowed set; map the common
+# ones rather than failing the whole investigation on a wording choice.
+_SEVERITY_ALIASES = {
+    "sev0": "critical", "sev_0": "critical", "sev1": "critical", "sev_1": "critical",
+    "blocker": "critical", "fatal": "critical", "urgent": "critical", "p0": "critical",
+    "severe": "high", "major": "high", "sev2": "high", "sev_2": "high", "p1": "high",
+    "moderate": "medium", "normal": "medium", "warning": "medium",
+    "sev3": "medium", "sev_3": "medium", "p2": "medium",
+    "minor": "low", "trivial": "low", "sev4": "low", "sev_4": "low", "p3": "low",
+    "informational": "info", "note": "info", "notice": "info",
+}
+
+_VALID_DECISIONS = {
+    "root_cause_established",
+    "insufficient_evidence",
+    "investigation_failed",
+    "budget_exceeded",
+    "inconclusive",
+}
+
+_DECISION_ALIASES = {
+    "root_cause_found": "root_cause_established",
+    "root_cause_identified": "root_cause_established",
+    "established": "root_cause_established",
+    "resolved": "root_cause_established",
+    "confirmed": "root_cause_established",
+    "insufficient": "insufficient_evidence",
+    "not_enough_evidence": "insufficient_evidence",
+    "needs_more_evidence": "insufficient_evidence",
+    "failed": "investigation_failed",
+    "error": "investigation_failed",
+    "unknown": "inconclusive",
+    "undetermined": "inconclusive",
+    "unclear": "inconclusive",
+}
+
+
+def _normalize(raw: str | None, valid: set[str], aliases: dict[str, str], fallback: str) -> str:
+    """Coerce an LLM-supplied enum string into one of the allowed literals."""
+    value = (raw or "").strip().lower().replace("-", "_").replace(" ", "_")
+    if value in valid:
+        return value
+    if value in aliases:
+        return aliases[value]
+    logger.warning("Unrecognized value from decision agent", value=raw, fallback=fallback)
+    return fallback
+
+
 class DecisionAgent:
     """Synthesizes investigation results into a definitive root cause decision."""
 
@@ -104,13 +154,17 @@ class DecisionAgent:
                     confidence=f.confidence,
                     confidence_tier=tier,
                     evidence_ids=f.evidence_ids,
-                    severity=f.severity,
+                    severity=_normalize(f.severity, _VALID_SEVERITIES, _SEVERITY_ALIASES, "medium"),
                     category=f.category,
                     is_root_cause=f.is_root_cause,
                 ))
 
+            decision = _normalize(
+                result.decision, _VALID_DECISIONS, _DECISION_ALIASES, "inconclusive"
+            )
+
             root_cause = None
-            if result.decision == "root_cause_established" and result.root_cause_summary != "Not established":
+            if decision == "root_cause_established" and result.root_cause_summary != "Not established":
                 root_cause = {
                     "summary": result.root_cause_summary,
                     "confidence": result.confidence,
@@ -118,7 +172,7 @@ class DecisionAgent:
                 }
 
             return {
-                "decision": result.decision,
+                "decision": decision,
                 "findings": [*state.findings, *new_findings],
                 "root_cause": root_cause,
                 "investigation_gaps": result.investigation_gaps,

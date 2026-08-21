@@ -58,6 +58,22 @@ See [docs/architecture.md](docs/architecture.md) for the full architecture docum
 
 ## Quick Start
 
+### Fastest path
+
+```bash
+./start.sh            # start backend + frontend
+./start.sh status     # what is running, and where
+./start.sh stop       # shut both down
+```
+
+`start.sh` picks free ports automatically (the default `8000` is often taken by
+another service), points the frontend at whichever port the backend got, waits
+for `/health`, and writes logs to `.run/`. Override with `AEIP_BACKEND_PORT` /
+`AEIP_FRONTEND_PORT`.
+
+It expects `.venv` and a configured `.env`; the manual steps below cover
+first-time setup.
+
 ### Prerequisites
 
 - Docker Desktop
@@ -115,7 +131,7 @@ Navigate to [http://localhost:3000](http://localhost:3000)
 ### Incident Investigation
 
 ```bash
-curl -X POST http://localhost:8000/api/v1/investigations \
+curl -X POST "${AEIP_API:-http://localhost:8000}/api/v1/investigations" \
   -H "Content-Type: application/json" \
   -d '{
     "mode": "incident",
@@ -131,7 +147,7 @@ curl -X POST http://localhost:8000/api/v1/investigations \
 ### Repository Audit
 
 ```bash
-curl -X POST http://localhost:8000/api/v1/investigations \
+curl -X POST "${AEIP_API:-http://localhost:8000}/api/v1/investigations" \
   -H "Content-Type: application/json" \
   -d '{
     "mode": "audit",

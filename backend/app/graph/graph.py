@@ -442,8 +442,20 @@ async def human_approval_node(state: AgentState) -> dict[str, Any]:
         "investigation_id": state.investigation_id,
     })
 
+    # The resume payload comes from outside the graph, so the decision cannot
+    # be trusted to match the approval_status literal. Anything that is not an
+    # explicit approval is treated as a rejection (fail closed).
+    raw_decision = str(approval_result.get("decision", "")).strip().lower()
+    decision = "approved" if raw_decision in ("approved", "approve", "accept") else "rejected"
+    if raw_decision and decision == "rejected" and raw_decision not in ("rejected", "reject", "deny"):
+        logger.warning(
+            "Unrecognized approval decision, treating as rejected",
+            decision=approval_result.get("decision"),
+            investigation_id=state.investigation_id,
+        )
+
     return {
-        "approval_status": approval_result.get("decision", "rejected"),
+        "approval_status": decision,
     }
 
 
