@@ -36,6 +36,14 @@ interface Investigation {
   created_at: string;
 }
 
+interface Repository {
+  id: string;
+  name: string;
+  url: string | null;
+  local_path: string | null;
+  branch: string;
+}
+
 interface Finding {
   id: string;
   investigation_id: string;
@@ -61,6 +69,8 @@ export default function DashboardPage() {
   const [submitting, setSubmitting] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
+  const [repos, setRepos] = useState<Repository[]>([]);
+  const [selectedRepoId, setSelectedRepoId] = useState<string>("");
 
   useEffect(() => {
     fetchData();
@@ -70,10 +80,20 @@ export default function DashboardPage() {
 
   async function fetchData() {
     try {
-      const [invRes, findRes] = await Promise.all([
+      const [invRes, findRes, repoRes] = await Promise.all([
         fetch(apiUrl("/api/v1/investigations")),
-        fetch(apiUrl("/api/v1/findings"))
+        fetch(apiUrl("/api/v1/findings")),
+        fetch(apiUrl("/api/v1/repositories"))
       ]);
+
+      if (repoRes.ok) {
+        const repoData: Repository[] = await repoRes.json();
+        setRepos(repoData);
+        // Default to the first repo so the target is never ambiguous.
+        setSelectedRepoId((current) =>
+          current || (repoData.length > 0 ? repoData[0].id : "")
+        );
+      }
 
       if (invRes.ok) {
         const invData = await invRes.json();
@@ -98,6 +118,8 @@ export default function DashboardPage() {
     }
   }
 
+  const selectedRepo = repos.find((r) => r.id === selectedRepoId);
+
   async function handleCreateInvestigation(e: React.FormEvent) {
     e.preventDefault();
     if (!objective.trim()) return;
@@ -113,8 +135,13 @@ export default function DashboardPage() {
           mode: mode,
           priority: priority,
           metadata: {
-            workspace_path: "./demo_repo/checkout-api",
-            service_name: "checkout-api",
+            // Target the selected repository; the agents read the workspace
+            // from here, so this is what scopes the investigation.
+            repository_id: selectedRepo?.id,
+            workspace_path: selectedRepo?.local_path ?? "./demo_repo/checkout-api",
+            repository_url: selectedRepo?.url ?? undefined,
+            branch: selectedRepo?.branch,
+            service_name: selectedRepo?.name ?? "checkout-api",
           }
         })
       });
@@ -382,6 +409,50 @@ export default function DashboardPage() {
                     </button>
                   ))}
                 </div>
+              </div>
+
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="block text-xs font-mono text-slate-300 uppercase">
+                    Target Repository
+                  </label>
+                  <Link
+                    href="/repositories"
+                    className="text-xs text-sky-400 hover:text-sky-300 font-mono inline-flex items-center"
+                  >
+                    <Plus className="w-3 h-3 mr-1" />
+                    Add repo
+                  </Link>
+                </div>
+
+                {repos.length === 0 ? (
+                  <div className="rounded-xl border border-slate-700 bg-slate-950 p-3 text-xs text-slate-400">
+                    No repositories registered.{" "}
+                    <Link href="/repositories" className="text-sky-400 hover:text-sky-300">
+                      Add one
+                    </Link>{" "}
+                    to choose a target.
+                  </div>
+                ) : (
+                  <>
+                    <select
+                      value={selectedRepoId}
+                      onChange={(e) => setSelectedRepoId(e.target.value)}
+                      className="w-full rounded-xl bg-slate-950 border border-slate-700 p-3 text-sm text-slate-100 focus:outline-none focus:border-sky-500"
+                    >
+                      {repos.map((r) => (
+                        <option key={r.id} value={r.id}>
+                          {r.name} ({r.branch})
+                        </option>
+                      ))}
+                    </select>
+                    {selectedRepo && (
+                      <p className="text-xs font-mono text-slate-500 mt-1 break-all">
+                        {selectedRepo.local_path || selectedRepo.url}
+                      </p>
+                    )}
+                  </>
+                )}
               </div>
 
               <div>

@@ -6,9 +6,11 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 import structlog
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from pydantic import BaseModel
 
 from app.core.security import get_current_user_id
 from app.db.database import get_db_session
@@ -16,6 +18,30 @@ from app.db.models import Approval
 
 logger = structlog.get_logger(__name__)
 router = APIRouter()
+
+
+async def _resume_graph(investigation_id: str | None, decision: str) -> None:
+    """Resume the interrupted investigation; never let it fail the HTTP response."""
+    if not investigation_id:
+        return
+    try:
+        from app.graph.graph import resume_investigation_after_approval
+
+        await resume_investigation_after_approval(investigation_id, decision)
+    except Exception as exc:
+        logger.error(
+            "Failed to resume investigation after approval",
+            investigation_id=investigation_id,
+            decision=decision,
+            error=str(exc),
+            exc_info=True,
+        )
+
+
+class ApprovalDecision(BaseModel):
+    """Body for approve/reject. The UI posts JSON, so notes must live here."""
+
+    notes: str | None = None
 
 
 @router.get("/approvals")
@@ -73,7 +99,8 @@ async def get_approval(
 @router.post("/approvals/{approval_id}/approve")
 async def approve_action(
     approval_id: str,
-    notes: str | None = None,
+    background_tasks: BackgroundTasks,
+    body: ApprovalDecision | None = None,
     db: AsyncSession = Depends(get_db_session),
     user_id: str = Depends(get_current_user_id),
 ) -> dict:
@@ -93,7 +120,7 @@ async def approve_action(
     approval.status = "approved"
     approval.approved_by = user_id
     approval.reviewed_at = datetime.now(UTC)
-    approval.notes = notes
+    approval.notes = body.notes if body else None
 
     logger.info(
         "Approval granted",
@@ -102,17 +129,19 @@ async def approve_action(
         user=user_id,
     )
 
-    # TODO Phase 6: Resume the LangGraph graph at the interrupt point
-    # await resume_investigation_after_approval(approval.investigation_id, approval_id)
+    # Resume the paused graph once the decision is committed.
+    investigation_id = approval.investigation_id
+    await db.commit()
+    background_tasks.add_task(_resume_graph, investigation_id, "approved")
 
-    await db.flush()
     return {"status": "approved", "approval_id": approval_id}
 
 
 @router.post("/approvals/{approval_id}/reject")
 async def reject_action(
     approval_id: str,
-    notes: str | None = None,
+    background_tasks: BackgroundTasks,
+    body: ApprovalDecision | None = None,
     db: AsyncSession = Depends(get_db_session),
     user_id: str = Depends(get_current_user_id),
 ) -> dict:
@@ -132,7 +161,7 @@ async def reject_action(
     approval.status = "rejected"
     approval.approved_by = user_id
     approval.reviewed_at = datetime.now(UTC)
-    approval.notes = notes
+    approval.notes = body.notes if body else None
 
     logger.info(
         "Approval rejected",
@@ -141,5 +170,9 @@ async def reject_action(
         user=user_id,
     )
 
-    await db.flush()
+    # Resume too: the graph routes a rejection to a clean stop.
+    investigation_id = approval.investigation_id
+    await db.commit()
+    background_tasks.add_task(_resume_graph, investigation_id, "rejected")
+
     return {"status": "rejected", "approval_id": approval_id}

@@ -91,6 +91,16 @@ export function Navbar() {
               System Audits
             </Link>
             <Link
+              href="/repositories"
+              className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
+                pathname === "/repositories"
+                  ? "bg-slate-800 text-sky-400"
+                  : "text-slate-400 hover:text-slate-200 hover:bg-slate-900"
+              }`}
+            >
+              Repositories
+            </Link>
+            <Link
               href="/approvals"
               className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors relative flex items-center space-x-1.5 ${
                 pathname === "/approvals" 

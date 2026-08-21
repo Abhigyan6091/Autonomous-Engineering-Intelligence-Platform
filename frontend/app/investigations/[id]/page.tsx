@@ -48,6 +48,7 @@ export default function InvestigationDetailPage() {
   const [approvalModal, setApprovalModal] = useState<boolean>(false);
   const [actionNotes, setActionNotes] = useState<string>("");
   const [submittingAction, setSubmittingAction] = useState<boolean>(false);
+  const [actionError, setActionError] = useState<string | null>(null);
 
   const eventStreamRef = useRef<HTMLDivElement>(null);
 
@@ -113,24 +114,52 @@ export default function InvestigationDetailPage() {
 
   async function handleApproval(decision: "approve" | "reject") {
     setSubmittingAction(true);
+    setActionError(null);
     try {
       // Find pending approval for this investigation
       const appListRes = await fetch(apiUrl("/api/v1/approvals"));
-      if (appListRes.ok) {
-        const apps = await appListRes.json();
-        const targetApp = apps.find((a: any) => a.investigation_id === id);
-        if (targetApp) {
-          await fetch(apiUrl(`/api/v1/approvals/${targetApp.id}/${decision}`), {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ notes: actionNotes }),
-          });
-          setApprovalModal(false);
-          loadAllData();
-        }
+      if (!appListRes.ok) {
+        setActionError(`Could not load pending approvals (HTTP ${appListRes.status}).`);
+        return;
       }
+
+      const apps = await appListRes.json();
+      const targetApp = apps.find(
+        (a: { investigation_id: string }) => a.investigation_id === id
+      );
+
+      if (!targetApp) {
+        // Silently doing nothing here is what made the buttons look dead.
+        setActionError(
+          "No pending approval exists for this investigation. An approval is only created once a remediation patch is proposed."
+        );
+        return;
+      }
+
+      const res = await fetch(
+        apiUrl(`/api/v1/approvals/${targetApp.id}/${decision}`),
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ notes: actionNotes }),
+        }
+      );
+
+      if (!res.ok) {
+        const detail = await res.text();
+        setActionError(
+          `Backend rejected the ${decision} (HTTP ${res.status}): ${detail.slice(0, 200)}`
+        );
+        return;
+      }
+
+      setActionError(null);
+      setApprovalModal(false);
+      loadAllData();
     } catch (err) {
-      alert("Action failed: " + err);
+      setActionError(
+        `Action failed: ${err instanceof Error ? err.message : String(err)}`
+      );
     } finally {
       setSubmittingAction(false);
     }
@@ -515,6 +544,12 @@ export default function InvestigationDetailPage() {
               />
             </div>
 
+            {actionError && (
+              <div className="rounded-lg border border-rose-500/40 bg-rose-950/40 p-3 text-xs text-rose-300">
+                {actionError}
+              </div>
+            )}
+
             <div className="flex items-center justify-between pt-4 border-t border-slate-800">
               <button
                 type="button"
@@ -522,7 +557,7 @@ export default function InvestigationDetailPage() {
                 disabled={submittingAction}
                 className="px-4 py-2.5 rounded-xl bg-rose-950 text-rose-300 hover:bg-rose-900 font-semibold text-xs border border-rose-800"
               >
-                Reject Action
+                {submittingAction ? "Processing..." : "Reject Action"}
               </button>
 
               <button

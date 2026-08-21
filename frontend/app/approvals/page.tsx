@@ -19,6 +19,7 @@ import {
 export default function ApprovalsPage() {
   const [approvals, setApprovals] = useState<any[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
+  const [error, setError] = useState<string | null>(null);
   const [selectedApproval, setSelectedApproval] = useState<any>(null);
   const [notes, setNotes] = useState<string>("");
   const [submitting, setSubmitting] = useState<boolean>(false);
@@ -32,9 +33,14 @@ export default function ApprovalsPage() {
       const res = await fetch(apiUrl("/api/v1/approvals"));
       if (res.ok) {
         setApprovals(await res.json());
+        setError(null);
+      } else {
+        setError(`Could not load approvals (HTTP ${res.status}).`);
       }
-    } catch {
-      // ignore
+    } catch (err) {
+      setError(
+        `Cannot reach the backend. ${err instanceof Error ? err.message : String(err)}`
+      );
     } finally {
       setLoading(false);
     }
@@ -44,16 +50,32 @@ export default function ApprovalsPage() {
     if (!selectedApproval) return;
     setSubmitting(true);
     try {
-      await fetch(apiUrl(`/api/v1/approvals/${selectedApproval.id}/${decision}`), {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ notes }),
-      });
+      // Without checking the response a 404/409 closed the modal as if it worked.
+      const res = await fetch(
+        apiUrl(`/api/v1/approvals/${selectedApproval.id}/${decision}`),
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ notes }),
+        }
+      );
+
+      if (!res.ok) {
+        const detail = await res.text();
+        setError(
+          `Backend rejected the ${decision} (HTTP ${res.status}): ${detail.slice(0, 200)}`
+        );
+        return;
+      }
+
+      setError(null);
       setSelectedApproval(null);
       setNotes("");
       fetchApprovals();
     } catch (err) {
-      alert("Action failed: " + err);
+      setError(
+        `Action failed: ${err instanceof Error ? err.message : String(err)}`
+      );
     } finally {
       setSubmitting(false);
     }
@@ -64,6 +86,12 @@ export default function ApprovalsPage() {
       <Navbar />
 
       <main className="flex-1 max-w-5xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
+        {error && (
+          <div className="rounded-xl border border-rose-500/40 bg-rose-950/40 p-4 text-sm text-rose-300">
+            {error}
+          </div>
+        )}
+
         <div className="glass-panel p-6 rounded-2xl border border-slate-800 space-y-2">
           <div className="flex items-center space-x-3">
             <ShieldAlert className="w-6 h-6 text-amber-400" />

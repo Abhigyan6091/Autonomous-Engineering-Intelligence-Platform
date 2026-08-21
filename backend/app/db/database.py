@@ -21,10 +21,13 @@ class Base(DeclarativeBase):
 def _build_engine_kwargs() -> dict:
     """Build engine kwargs appropriate for the database backend."""
     if settings.is_sqlite:
-        # SQLite: simpler pool configuration
+        # SQLite: simpler pool configuration.
+        # `timeout` makes a writer wait for a competing write instead of
+        # failing immediately with "database is locked" — the graph's
+        # background tasks and API requests write concurrently.
         return {
             "echo": settings.DB_ECHO,
-            "connect_args": {"check_same_thread": False},
+            "connect_args": {"check_same_thread": False, "timeout": 30},
         }
     else:
         # PostgreSQL: full pool configuration
@@ -42,6 +45,23 @@ engine = create_async_engine(
     settings.DATABASE_URL,
     **_build_engine_kwargs(),
 )
+
+if settings.is_sqlite:
+    from sqlalchemy import event
+
+    @event.listens_for(engine.sync_engine, "connect")
+    def _set_sqlite_pragmas(dbapi_connection, _connection_record):  # type: ignore[no-untyped-def]
+        """
+        WAL lets readers run alongside a writer, and busy_timeout makes a
+        blocked writer wait rather than raise. Without both, the LangGraph
+        checkpointer and the ORM deadlock on the same file.
+        """
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA journal_mode=WAL")
+        cursor.execute("PRAGMA busy_timeout=30000")
+        cursor.execute("PRAGMA synchronous=NORMAL")
+        cursor.close()
+
 
 # Async session factory
 AsyncSessionLocal = async_sessionmaker(

@@ -18,7 +18,12 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en" className="dark">
-      <body className={inter.className}>{children}</body>
+      {/* Browser extensions (Grammarly and friends) add attributes to <body>
+          before React hydrates, which trips the hydration mismatch warning.
+          This suppresses that one-level diff only. */}
+      <body className={inter.className} suppressHydrationWarning>
+        {children}
+      </body>
     </html>
   );
 }

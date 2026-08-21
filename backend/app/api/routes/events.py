@@ -5,12 +5,13 @@ from __future__ import annotations
 
 import asyncio
 import json
+from datetime import datetime
 from typing import AsyncGenerator
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sse_starlette.sse import EventSourceResponse
-from sqlalchemy import select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import get_current_user_id
@@ -32,6 +33,10 @@ async def _generate_investigation_events(
     """
     from app.db.database import AsyncSessionLocal
 
+    # Event ids are random UUIDs, so they cannot order a cursor. Track the
+    # (timestamp, id) of the last delivered event instead; ids only break ties
+    # between events sharing a timestamp.
+    last_seen_ts: datetime | None = None
     last_seen_id: str | None = last_event_id
     poll_interval = 1.0  # seconds
 
@@ -60,16 +65,43 @@ async def _generate_investigation_events(
             q = (
                 select(AuditEvent)
                 .where(AuditEvent.investigation_id == investigation_id)
-                .order_by(AuditEvent.timestamp)
+                .order_by(AuditEvent.timestamp, AuditEvent.id)
             )
-            if last_seen_id:
-                # This is a simplification; production would use cursor-based pagination
-                q = q.where(AuditEvent.id > last_seen_id)
+            if last_seen_ts is not None:
+                # Strictly after the cursor: a later timestamp, or the same
+                # timestamp with a larger id.
+                q = q.where(
+                    or_(
+                        AuditEvent.timestamp > last_seen_ts,
+                        and_(
+                            AuditEvent.timestamp == last_seen_ts,
+                            AuditEvent.id > last_seen_id,
+                        ),
+                    )
+                )
+            elif last_seen_id:
+                # Resume from a client-supplied Last-Event-ID.
+                anchor = await db.execute(
+                    select(AuditEvent.timestamp).where(AuditEvent.id == last_seen_id)
+                )
+                anchor_ts = anchor.scalar_one_or_none()
+                if anchor_ts is not None:
+                    last_seen_ts = anchor_ts
+                    q = q.where(
+                        or_(
+                            AuditEvent.timestamp > anchor_ts,
+                            and_(
+                                AuditEvent.timestamp == anchor_ts,
+                                AuditEvent.id > last_seen_id,
+                            ),
+                        )
+                    )
 
             result = await db.execute(q.limit(50))
             events = result.scalars().all()
 
             for event in events:
+                last_seen_ts = event.timestamp
                 last_seen_id = event.id
                 yield {
                     "data": json.dumps({

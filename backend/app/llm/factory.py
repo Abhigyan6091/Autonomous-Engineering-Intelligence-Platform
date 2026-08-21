@@ -50,14 +50,40 @@ def get_provider() -> LLMProvider:
     return provider
 
 
+def _with_usage_tracking(model: BaseChatModel) -> BaseChatModel:
+    """
+    Attach the token-accounting callback so every call is metered.
+
+    Set on the model itself rather than via with_config(): agents call
+    .with_structured_output(), which rebuilds the runnable and would drop a
+    config-level callback — and those are the calls that burn the tokens.
+    """
+    from app.llm.usage import TokenUsageCallback
+
+    try:
+        existing = list(model.callbacks or [])  # type: ignore[union-attr]
+    except (AttributeError, TypeError):
+        existing = []
+
+    if any(isinstance(cb, TokenUsageCallback) for cb in existing):
+        return model
+
+    try:
+        model.callbacks = [*existing, TokenUsageCallback()]  # type: ignore[union-attr]
+        return model
+    except (AttributeError, ValueError):
+        # Model does not accept callbacks; fall back to config-level.
+        return model.with_config(callbacks=[TokenUsageCallback()])
+
+
 def get_primary_llm() -> BaseChatModel:
     """Return the primary (capable) LLM for complex reasoning tasks."""
-    return get_provider().get_primary_model()
+    return _with_usage_tracking(get_provider().get_primary_model())
 
 
 def get_fast_llm() -> BaseChatModel:
     """Return the fast LLM for classification and routing tasks."""
-    return get_provider().get_fast_model()
+    return _with_usage_tracking(get_provider().get_fast_model())
 
 
 def get_provider_name() -> str:

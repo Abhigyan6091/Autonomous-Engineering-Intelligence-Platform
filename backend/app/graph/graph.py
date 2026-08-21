@@ -17,6 +17,7 @@ across process restarts.
 """
 from __future__ import annotations
 
+import asyncio
 import uuid
 from datetime import UTC, datetime
 from typing import Any
@@ -216,6 +217,11 @@ async def _run_agent(
     for item in items:
         item.provenance = {**(item.provenance or {}), "agent": agent_name, "task_id": task_id}
 
+    # Evidence items are produced one per tool execution, so their count is
+    # the agent's tool-call contribution to the budget.
+    from app.llm.usage import record_tool_call
+
+    await record_tool_call(state.investigation_id, len(items))
     await _save_evidence_to_db(state.investigation_id, items)
     await _update_task_db(
         task_id, {"status": "completed", "completed_at": datetime.now(UTC)}
@@ -667,27 +673,75 @@ def build_investigation_graph() -> StateGraph:
     return graph
 
 
+# The checkpointer must outlive a single request: the run that pauses at
+# human_approval and the API call that resumes it are different tasks, so an
+# in-process MemorySaver per compile would lose the interrupted state.
+_checkpointer: Any = None
+_checkpointer_lock = asyncio.Lock()
+
+
+async def get_checkpointer() -> Any:
+    """
+    Return the process-wide checkpointer, creating it on first use.
+
+    SQLite-backed so an interrupted graph survives until the human approves,
+    and across a backend restart.
+    """
+    global _checkpointer
+    if _checkpointer is not None:
+        return _checkpointer
+
+    async with _checkpointer_lock:
+        if _checkpointer is not None:
+            return _checkpointer
+
+        from app.core.config import settings
+
+        if settings.is_sqlite:
+            import aiosqlite
+            from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
+
+            # Reuse the app database file; the saver owns its own tables.
+            path = settings.DATABASE_URL.split("///")[-1]
+            conn = await aiosqlite.connect(path, check_same_thread=False, timeout=30)
+            # Match the ORM's pragmas: without WAL + busy_timeout this second
+            # connection deadlocks against it on "database is locked".
+            await conn.execute("PRAGMA journal_mode=WAL")
+            await conn.execute("PRAGMA busy_timeout=30000")
+            await conn.execute("PRAGMA synchronous=NORMAL")
+            await conn.commit()
+            saver = AsyncSqliteSaver(conn)
+            await saver.setup()
+            _checkpointer = saver
+            logger.info("Checkpointer ready", backend="sqlite", path=path)
+        else:
+            from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+
+            saver = AsyncPostgresSaver.from_conn_string(settings.DATABASE_URL)
+            _checkpointer = await saver.__aenter__()
+            await _checkpointer.setup()
+            logger.info("Checkpointer ready", backend="postgres")
+
+    return _checkpointer
+
+
+async def compile_graph_async():
+    """Compile the graph against the shared, durable checkpointer."""
+    graph = build_investigation_graph()
+    # No interrupt_before: human_approval_node calls interrupt() itself, and
+    # pausing twice would leave the first pause with nothing to resume into.
+    return graph.compile(checkpointer=await get_checkpointer())
+
+
 def compile_graph(use_memory_checkpointer: bool = True):
     """
-    Compile the graph with a checkpointer.
+    Compile the graph with an in-memory checkpointer.
 
-    In development: uses MemorySaver (in-memory, not durable)
-    In production: uses PostgreSQL-backed checkpointer
+    Kept for tests and inspection. Interrupts cannot be resumed across
+    requests with this; runtime code should use compile_graph_async().
     """
     graph = build_investigation_graph()
-
-    if use_memory_checkpointer:
-        checkpointer = MemorySaver()
-    else:
-        # PostgreSQL checkpointer (Phase 6)
-        # from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
-        # checkpointer = await AsyncPostgresSaver.from_conn_string(settings.DATABASE_URL)
-        checkpointer = MemorySaver()  # Fallback until Phase 6
-
-    return graph.compile(
-        checkpointer=checkpointer,
-        interrupt_before=["human_approval"],  # Interrupt before human approval node
-    )
+    return graph.compile(checkpointer=MemorySaver())
 
 
 # =============================================================================
@@ -730,7 +784,7 @@ async def run_investigation(investigation_id: str) -> None:
         "recursion_limit": 50,
     }
 
-    app_graph = compile_graph()
+    app_graph = await compile_graph_async()
 
     logger.info(
         "Starting investigation graph",
@@ -739,10 +793,17 @@ async def run_investigation(investigation_id: str) -> None:
     )
 
     try:
-        # Run the graph
-        async for event in app_graph.astream(initial_state.model_dump(), config=config):
-            # Events are already persisted via audit events in each node
-            logger.debug("Graph event", event_keys=list(event.keys()))
+        # Run the graph. The context var attributes LLM token usage to this
+        # investigation, so budget counters reflect real consumption.
+        from app.llm.usage import investigation_context
+
+        with investigation_context(investigation_id):
+            async for event in app_graph.astream(initial_state.model_dump(), config=config):
+                # Events are already persisted via audit events in each node
+                logger.debug("Graph event", event_keys=list(event.keys()))
+
+        # A run that stops at the approval interrupt is paused, not finished.
+        await _mark_if_awaiting_approval(app_graph, config, investigation_id)
     except Exception as exc:
         logger.error(
             "Graph execution failed",
@@ -755,6 +816,118 @@ async def run_investigation(investigation_id: str) -> None:
             "last_error": str(exc),
         })
         raise
+
+
+async def _mark_if_awaiting_approval(app_graph: Any, config: dict, investigation_id: str) -> None:
+    """Flag the investigation as awaiting approval if the graph paused there."""
+    try:
+        snapshot = await app_graph.aget_state(config)
+    except Exception as exc:
+        logger.error("Could not read graph state", error=str(exc))
+        return
+
+    # A dynamic interrupt() leaves pending tasks plus an interrupt payload.
+    if not snapshot.next:
+        return
+
+    await _update_investigation_db(investigation_id, {"status": "awaiting_approval"})
+    logger.info(
+        "Investigation paused for human approval",
+        investigation_id=investigation_id,
+        pending=list(snapshot.next),
+    )
+
+
+async def resume_investigation_after_approval(
+    investigation_id: str, decision: str
+) -> None:
+    """
+    Resume a graph paused at the human approval interrupt.
+
+    Called by the approvals API once a human decides. The decision is passed
+    into the interrupted node, which routes to remediation or to END.
+    """
+    from sqlalchemy import select
+
+    from app.db.database import AsyncSessionLocal
+    from app.db.models import Investigation
+
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(
+            select(Investigation).where(Investigation.id == investigation_id)
+        )
+        investigation = result.scalar_one_or_none()
+
+    if not investigation:
+        logger.error("Cannot resume: investigation not found", investigation_id=investigation_id)
+        return
+
+    thread_id = investigation.langgraph_thread_id
+    if not thread_id:
+        logger.error("Cannot resume: no thread id", investigation_id=investigation_id)
+        return
+
+    config = {"configurable": {"thread_id": thread_id}, "recursion_limit": 50}
+    app_graph = await compile_graph_async()
+
+    snapshot = await app_graph.aget_state(config)
+    if not snapshot.next:
+        logger.warning(
+            "Cannot resume: graph is not paused",
+            investigation_id=investigation_id,
+        )
+        return
+
+    await _update_investigation_db(investigation_id, {"status": "running"})
+    await _emit_event(investigation_id, "approval.decided", {"decision": decision})
+
+    logger.info(
+        "Resuming investigation after approval",
+        investigation_id=investigation_id,
+        decision=decision,
+    )
+
+    try:
+        from langgraph.types import Command
+
+        from app.llm.usage import investigation_context
+
+        with investigation_context(investigation_id):
+            async for event in app_graph.astream(
+                Command(resume={"decision": decision}), config=config
+            ):
+                logger.debug("Graph event (resumed)", event_keys=list(event.keys()))
+
+        # Nothing downstream of the interrupt sets a terminal status, so the
+        # investigation would sit at "running" forever once the graph ends.
+        snapshot = await app_graph.aget_state(config)
+        if snapshot.next:
+            await _update_investigation_db(
+                investigation_id, {"status": "awaiting_approval"}
+            )
+        else:
+            await _update_investigation_db(
+                investigation_id,
+                {"status": "completed", "completed_at": datetime.now(UTC)},
+            )
+            await _emit_event(investigation_id, "investigation.completed", {
+                "decision": decision,
+            })
+            logger.info(
+                "Investigation completed after approval",
+                investigation_id=investigation_id,
+                decision=decision,
+            )
+    except Exception as exc:
+        logger.error(
+            "Resumed graph failed",
+            investigation_id=investigation_id,
+            error=str(exc),
+            exc_info=True,
+        )
+        await _update_investigation_db(
+            investigation_id, {"status": "failed", "last_error": str(exc)}
+        )
 
 
 # =============================================================================
