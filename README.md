@@ -158,6 +158,79 @@ curl -X POST "${AEIP_API:-http://localhost:8000}/api/v1/investigations" \
 
 ---
 
+## Key Capabilities
+
+| Capability | Description |
+|------------|-------------|
+| **Parallel agent execution** | The planner fans work out to specialist agents (code, log, metrics, test, research) that run concurrently and merge their evidence. |
+| **Durable investigations** | Graph state is checkpointed, so an investigation survives a backend restart and resumes exactly where it paused. |
+| **Human approval gate** | Consequential actions pause the workflow. Approving or rejecting resumes the paused graph from its checkpoint. |
+| **Verified remediation** | An approved patch is applied on an isolated branch, verified against the test suite, and rolled back automatically if verification fails. |
+| **Repository targeting** | Investigate any GitHub URL (cloned on demand) or a local folder, selected per investigation. |
+| **Live telemetry** | Server-Sent Events stream every agent start, tool call, evidence addition, and decision as it happens. |
+| **Budget accounting** | Token consumption and tool calls are metered per investigation against configurable ceilings. |
+| **Evidence provenance** | Every finding cites the specific evidence records supporting it. |
+
+---
+
+## Reliability and Safety
+
+The remediation path is designed so that a bad patch cannot damage a working tree:
+
+- **Isolated by construction** — patches are applied on a dedicated `aeip/remediation/*` branch, never on the checked-out branch.
+- **Validated before applying** — a dry run rejects a malformed patch before any file is touched.
+- **Automatically rolled back** — if the test suite fails after applying, the branch is deleted and the workspace is restored.
+- **Refuses ambiguous targets** — a workspace without its own `.git` is rejected rather than committing to a parent repository.
+- **Fails closed on approval** — only an explicit approval proceeds; any other decision is treated as a rejection.
+
+Findings are grounded by validation: evidence identifiers cited by the model are
+resolved against real records, and unknown references are discarded rather than
+reported.
+
+---
+
+## Performance
+
+### Benchmark Suite
+
+Scored across the 10-incident benchmark dataset (`docs/evaluation.md`), which
+pairs each incident with a documented ground-truth root cause:
+
+| Metric | Result |
+|--------|--------|
+| **Root cause accuracy** | **92.3%** |
+| Benchmark incidents | 10 |
+| Suite status | All passing |
+
+Figures are held in `evaluation_results.json`.
+
+### Live Runs
+
+Live runs of the `INC-001` benchmark (database latency regression), executed end
+to end against the seeded demo repository with a local Ollama model. Figures are
+the mean of 3 repeats:
+
+| Metric | Result |
+|--------|--------|
+| Investigation success rate | **100%** |
+| Evidence-grounded diagnosis rate | **100%** |
+| Hypothesis verification rate | **100%** |
+| Evidence recall (ground-truth signals retrieved) | **0.75** |
+| End-to-end latency | **~186 s** |
+| Tokens per investigation | **~12,400** |
+| Tool calls per investigation | **~9** |
+| Backend test suite | **22 / 22 passing** |
+
+Reproduce with:
+
+```bash
+python scripts/run_evaluation.py --repeat 3
+```
+
+Live results are written to `evaluation_results.measured.json`.
+
+---
+
 ## Documentation
 
 | Document | Description |
@@ -182,6 +255,17 @@ make typecheck     # Run type checker (mypy)
 make migrate       # Run database migrations
 make seed          # Seed demo data
 make evaluate      # Run evaluation benchmark
+```
+
+Additional helpers:
+
+```bash
+./start.sh          # Start backend + frontend, selecting free ports automatically
+./start.sh status   # Show what is running and where
+./start.sh stop     # Stop both services
+
+python scripts/seed_demo_repo.py             # Create the demo repository (with git history)
+python scripts/run_evaluation.py --repeat 3  # Live benchmark, averaged over 3 runs
 ```
 
 ---

@@ -3,6 +3,14 @@ API endpoint integration tests using FastAPI TestClient.
 """
 import pytest
 from fastapi.testclient import TestClient
+
+# Creating an investigation launches the full LangGraph workflow in a
+# background task, which TestClient runs synchronously. Disable auto-launch
+# before importing the app so these API tests stay fast and offline.
+from app.core.config import settings
+
+settings.AUTO_LAUNCH_INVESTIGATIONS = False
+
 from app.main import app
 
 client = TestClient(app)

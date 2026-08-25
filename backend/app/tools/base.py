@@ -5,6 +5,8 @@ risk classifications, and permission requirements.
 """
 from __future__ import annotations
 
+import functools
+import inspect
 from abc import ABC, abstractmethod
 from typing import Any, Generic, Literal, TypeVar
 from pydantic import BaseModel, Field
@@ -35,6 +37,34 @@ class ToolExecutionResult(BaseModel):
 
 class BaseTool(ABC, Generic[InputT, OutputT]):
     """Abstract Base Class for all AEIP Tools."""
+
+    def __init_subclass__(cls, **kwargs: Any) -> None:
+        """
+        Meter every tool invocation.
+
+        Wrapping execute() here counts real tool calls, rather than inferring
+        them from how much evidence an agent happened to return.
+        """
+        super().__init_subclass__(**kwargs)
+
+        execute = cls.__dict__.get("execute")
+        if execute is None or getattr(execute, "_aeip_metered", False):
+            return
+        if not inspect.iscoroutinefunction(execute):
+            return
+
+        @functools.wraps(execute)
+        async def metered(self, params, context=None):  # type: ignore[no-untyped-def]
+            from app.llm.usage import current_investigation_id, record_tool_call
+
+            investigation_id = current_investigation_id.get()
+            try:
+                return await execute(self, params, context)
+            finally:
+                await record_tool_call(investigation_id, 1)
+
+        metered._aeip_metered = True  # type: ignore[attr-defined]
+        cls.execute = metered  # type: ignore[assignment]
 
     name: str
     description: str

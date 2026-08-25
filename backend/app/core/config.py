@@ -44,6 +44,10 @@ class Settings(BaseSettings):
     CORS_ORIGINS: str = "http://localhost:3000,http://127.0.0.1:3000"
 
     # ── Database ───────────────────────────────────────────────────────────
+    # Set false to create investigations without executing the workflow
+    # (tests, seeding, and bulk imports that should not spend LLM budget).
+    AUTO_LAUNCH_INVESTIGATIONS: bool = True
+
     DATABASE_URL: str = f"sqlite+aiosqlite:///{PROJECT_ROOT / 'aeip_dev.db'}"
     DB_POOL_SIZE: int = 10
     DB_MAX_OVERFLOW: int = 20

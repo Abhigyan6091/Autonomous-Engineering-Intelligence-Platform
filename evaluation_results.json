@@ -1,6 +1,8 @@
 {
   "overall_accuracy": 92.3,
   "benchmark_count": 10,
+  "source": "simulated",
+  "note": "Projected target figures from the reference benchmark definition. Live measured runs are written to evaluation_results.measured.json by scripts/run_evaluation.py.",
   "results": [
     {
       "incident_id": "INC-001",

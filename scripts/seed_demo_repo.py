@@ -17,6 +17,51 @@ def write(path: pathlib.Path, content: str) -> None:
     path.write_text(content.strip() + "\n")
 
 
+def init_git_repo() -> None:
+    """
+    Make the demo repo a real git repository.
+
+    Without its own .git, git tools walk up to the parent repository and
+    return that project's history as evidence — and remediation would target
+    the wrong repo entirely.
+    """
+    import subprocess
+
+    def git(*args: str) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            ["git", "-C", str(BASE), *args], capture_output=True, text=True
+        )
+
+    if (BASE / ".git").exists():
+        print("   git repository already initialised")
+        return
+
+    git("init", "-q")
+    git("config", "user.email", "demo@aeip.local")
+    git("config", "user.name", "AEIP Demo Seed")
+
+    # Baseline commit: the code as it was before the regression.
+    baseline = BASE / "alembic" / "versions" / "3a8f2b1_remove_product_id_index.py"
+    stashed = baseline.read_text() if baseline.exists() else None
+    if stashed is not None:
+        baseline.unlink()
+
+    git("add", "-A")
+    git("commit", "-q", "-m", "baseline: checkout-api before inventory regression")
+
+    # Regression commit: reintroduce the migration that drops the index.
+    if stashed is not None:
+        baseline.write_text(stashed)
+        git("add", "-A")
+        git(
+            "commit", "-q", "-m",
+            "3a8f2b1 perf: drop unused index ix_inventory_items_product_id\n\n"
+            "Removes the index on inventory_items.product_id to speed up writes.",
+        )
+
+    print("   git repository initialised with baseline + regression commits")
+
+
 def main() -> None:
     # ── Source files ────────────────────────────────────────────────────────
 
@@ -338,6 +383,8 @@ Author: dev-carol <carol@example.com>
 Date:   Wed Jan 10 09:15:44 2024 +0000
     feat: add N+1 inventory check loop for multi-item carts
 ''')
+
+    init_git_repo()
 
     print("[SUCCESS] Demo repository created at:", BASE)
     print("   Files created:")

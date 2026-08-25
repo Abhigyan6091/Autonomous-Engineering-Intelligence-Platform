@@ -1,0 +1,176 @@
+{
+  "generated_at": "2026-08-25T15:48:56.419822+00:00",
+  "measured": true,
+  "summary": {
+    "benchmark_count": 3,
+    "root_cause_accuracy": 0.333,
+    "evidence_recall": 0.75,
+    "evidence_grounded_diagnosis_rate": 1.0,
+    "hypothesis_verification_rate": 1.0,
+    "investigation_success_rate": 1.0,
+    "tool_call_efficiency": 0.473,
+    "mean_tool_calls": 9.3,
+    "mean_tokens": 12444.0,
+    "latency_seconds": {
+      "min": 176.5,
+      "mean": 185.6,
+      "max": 197.3
+    },
+    "across_runs": {
+      "repeats": 3,
+      "root_cause_accuracy": {
+        "mean": 0.333,
+        "min": 0.25,
+        "max": 0.5
+      },
+      "evidence_recall": {
+        "mean": 0.75,
+        "min": 0.75,
+        "max": 0.75
+      },
+      "evidence_grounded_diagnosis_rate": {
+        "mean": 1.0,
+        "min": 1.0,
+        "max": 1.0
+      },
+      "hypothesis_verification_rate": {
+        "mean": 1.0,
+        "min": 1.0,
+        "max": 1.0
+      },
+      "investigation_success_rate": {
+        "mean": 1.0,
+        "min": 1.0,
+        "max": 1.0
+      },
+      "tool_call_efficiency": {
+        "mean": 0.473,
+        "min": 0.308,
+        "max": 0.667
+      },
+      "mean_tool_calls": {
+        "mean": 9.333,
+        "min": 6.0,
+        "max": 13.0
+      },
+      "mean_tokens": {
+        "mean": 12444.0,
+        "min": 11486.0,
+        "max": 13986.0
+      },
+      "latency_seconds": {
+        "mean": 185.6,
+        "min": 176.5,
+        "max": 197.3
+      }
+    },
+    "remediation": {
+      "attempted": 3,
+      "patch_applied": 0,
+      "patch_rejected": 1,
+      "rolled_back_after_verification": 0,
+      "verified_success": 0,
+      "patch_apply_rate": 0.0,
+      "remediation_success_rate": 0.0
+    }
+  },
+  "results": [
+    {
+      "incident_id": "INC-001",
+      "name": "Database Latency Regression (Missing Index)",
+      "investigation_id": "f2de6f3f-7202-42d3-ac37-c29dfc04e23d",
+      "status": "completed",
+      "error": null,
+      "rca_accuracy": 0.5,
+      "rca_keywords_hit": [
+        "product_id",
+        "3a8f2b1"
+      ],
+      "evidence_recall": 0.75,
+      "evidence_keywords_hit": [
+        "product_id",
+        "ix_inventory_items",
+        "3a8f2b1"
+      ],
+      "evidence_count": 15,
+      "findings_count": 5,
+      "grounded_findings": 5,
+      "evidence_grounded_rate": 1.0,
+      "hypotheses_count": 4,
+      "hypotheses_resolved": 4,
+      "hypothesis_resolution_rate": 1.0,
+      "tokens_used": 13986,
+      "tool_calls_used": 13,
+      "expected_min_tool_calls": 4,
+      "tool_efficiency": 0.308,
+      "confidence": 0.95,
+      "elapsed_seconds": 197.3,
+      "status_ok": true,
+      "repeat": 1
+    },
+    {
+      "incident_id": "INC-001",
+      "name": "Database Latency Regression (Missing Index)",
+      "investigation_id": "6c51e5d5-74a0-45d0-9ae7-cb790b51c6e3",
+      "status": "completed",
+      "error": null,
+      "rca_accuracy": 0.25,
+      "rca_keywords_hit": [
+        "product_id"
+      ],
+      "evidence_recall": 0.75,
+      "evidence_keywords_hit": [
+        "product_id",
+        "ix_inventory_items",
+        "3a8f2b1"
+      ],
+      "evidence_count": 10,
+      "findings_count": 4,
+      "grounded_findings": 4,
+      "evidence_grounded_rate": 1.0,
+      "hypotheses_count": 4,
+      "hypotheses_resolved": 4,
+      "hypothesis_resolution_rate": 1.0,
+      "tokens_used": 11860,
+      "tool_calls_used": 9,
+      "expected_min_tool_calls": 4,
+      "tool_efficiency": 0.444,
+      "confidence": 0.95,
+      "elapsed_seconds": 183.1,
+      "status_ok": true,
+      "repeat": 2
+    },
+    {
+      "incident_id": "INC-001",
+      "name": "Database Latency Regression (Missing Index)",
+      "investigation_id": "ca96633e-70ec-4c14-9f11-889320f5a98b",
+      "status": "completed",
+      "error": null,
+      "rca_accuracy": 0.25,
+      "rca_keywords_hit": [
+        "product_id"
+      ],
+      "evidence_recall": 0.75,
+      "evidence_keywords_hit": [
+        "product_id",
+        "ix_inventory_items",
+        "3a8f2b1"
+      ],
+      "evidence_count": 10,
+      "findings_count": 4,
+      "grounded_findings": 4,
+      "evidence_grounded_rate": 1.0,
+      "hypotheses_count": 4,
+      "hypotheses_resolved": 4,
+      "hypothesis_resolution_rate": 1.0,
+      "tokens_used": 11486,
+      "tool_calls_used": 6,
+      "expected_min_tool_calls": 4,
+      "tool_efficiency": 0.667,
+      "confidence": 0.95,
+      "elapsed_seconds": 176.5,
+      "status_ok": true,
+      "repeat": 3
+    }
+  ]
+}

@@ -182,6 +182,10 @@ class AgentState(BaseModel):
     remediation_proposal: RemediationProposal | None = None
     approval_status: Literal["pending", "approved", "rejected"] | None = None
 
+    # Outcome of applying and verifying the approved patch.
+    remediation_result: dict[str, Any] | None = None
+    verification_result: dict[str, Any] | None = None
+
     # ── Final report ───────────────────────────────────────────────────────────
     final_report: dict[str, Any] | None = None
 

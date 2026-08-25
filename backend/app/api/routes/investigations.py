@@ -179,7 +179,15 @@ async def create_investigation(
     await db.commit()
 
     # Launch the LangGraph workflow in the background
-    background_tasks.add_task(_launch_investigation, investigation.id)
+    from app.core.config import settings
+
+    if settings.AUTO_LAUNCH_INVESTIGATIONS:
+        background_tasks.add_task(_launch_investigation, investigation.id)
+    else:
+        logger.info(
+            "Auto-launch disabled; investigation created but not started",
+            investigation_id=investigation.id,
+        )
 
     return InvestigationResponse.from_orm_model(investigation)
 

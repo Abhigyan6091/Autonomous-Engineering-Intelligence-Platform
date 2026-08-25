@@ -24,12 +24,26 @@ Decision options:
 - "insufficient_evidence": Best hypothesis is below 0.5 confidence; more investigation needed.
 - "investigation_failed": Critical tool failures or contradictory evidence preventing conclusions.
 - "inconclusive": Evidence gathered but no clear pattern emerged; report partial findings.
+
+Rules for findings:
+- ALWAYS return findings for what the evidence supports, whatever the decision.
+  A finding records something the investigation established; it is not a claim
+  that the whole incident is solved. Only `is_root_cause` asserts that.
+- Ground every finding in the evidence: cite the ids from EVIDENCE in
+  `evidence_ids`. Do not invent ids, and do not emit a finding you cannot cite.
+- Quote concrete identifiers you actually saw — file paths, commit SHAs, symbol
+  and column names. A finding that names no specific artefact is not useful.
+- Set `is_root_cause` true only for the single finding that explains the
+  incident, and only when the evidence directly supports it.
 """
 
 DECISION_USER_TEMPLATE = """
 Objective: {objective}
 Mode: {mode}
 Planner iterations used: {iterations}/{max_iterations}
+
+=== EVIDENCE COLLECTED ===
+{evidence_text}
 
 === HYPOTHESES ===
 {hypotheses_text}
@@ -124,6 +138,13 @@ class DecisionAgent:
             f"[{h.id[:8]}] ({h.confidence_tier}) {h.statement} | Confidence: {h.confidence:.2f} | Status: {h.status}"
             for h in sorted(state.hypotheses, key=lambda x: x.confidence, reverse=True)
         )
+        # The decision agent previously saw only hypotheses, so concrete signals
+        # the agents had already gathered could never reach the final report.
+        evidence_text = "\n".join(
+            f"[{e.id[:8]}] ({e.source_type}) {e.source}: "
+            f"{(e.summary or '').strip()} :: {(e.content or '')[:400].strip()}"
+            for e in sorted(state.evidence, key=lambda x: x.quality_score, reverse=True)[:40]
+        ) or "No evidence collected."
         findings_text = "\n".join(f"- {f.claim}" for f in state.findings) or "None yet."
         gaps_text = "\n".join(f"- {g}" for g in state.investigation_gaps) or "None identified."
 
@@ -134,6 +155,7 @@ class DecisionAgent:
                 mode=state.mode,
                 iterations=state.planner_iterations,
                 max_iterations=state.max_planner_iterations,
+                evidence_text=evidence_text,
                 hypotheses_text=hypotheses_text,
                 findings_text=findings_text,
                 gaps_text=gaps_text,
@@ -144,6 +166,24 @@ class DecisionAgent:
             result: DecisionSchema = await self.llm.ainvoke(prompt)
             logger.info("Decision made", decision=result.decision, confidence=result.confidence)
 
+            # The model sees 8-char id prefixes, so map them back to real ids
+            # and drop anything it invented: a finding may only cite evidence
+            # that actually exists.
+            by_prefix = {e.id[:8]: e.id for e in state.evidence}
+            known_ids = {e.id for e in state.evidence}
+
+            def _resolve_evidence(ids: list[str]) -> list[str]:
+                resolved = []
+                for raw in ids or []:
+                    key = str(raw).strip().strip("[]")
+                    if key in known_ids:
+                        resolved.append(key)
+                    elif key[:8] in by_prefix:
+                        resolved.append(by_prefix[key[:8]])
+                    else:
+                        logger.warning("Finding cited unknown evidence id", evidence_id=raw)
+                return list(dict.fromkeys(resolved))
+
             # Build finding objects
             new_findings = []
             for f in result.findings:
@@ -153,7 +193,7 @@ class DecisionAgent:
                     claim=f.claim,
                     confidence=f.confidence,
                     confidence_tier=tier,
-                    evidence_ids=f.evidence_ids,
+                    evidence_ids=_resolve_evidence(f.evidence_ids),
                     severity=_normalize(f.severity, _VALID_SEVERITIES, _SEVERITY_ALIASES, "medium"),
                     category=f.category,
                     is_root_cause=f.is_root_cause,

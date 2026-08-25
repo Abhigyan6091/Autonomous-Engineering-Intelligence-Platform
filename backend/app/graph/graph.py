@@ -217,11 +217,7 @@ async def _run_agent(
     for item in items:
         item.provenance = {**(item.provenance or {}), "agent": agent_name, "task_id": task_id}
 
-    # Evidence items are produced one per tool execution, so their count is
-    # the agent's tool-call contribution to the budget.
-    from app.llm.usage import record_tool_call
-
-    await record_tool_call(state.investigation_id, len(items))
+    # Tool calls are metered in BaseTool.execute, not inferred from evidence.
     await _save_evidence_to_db(state.investigation_id, items)
     await _update_task_db(
         task_id, {"status": "completed", "completed_at": datetime.now(UTC)}
@@ -343,6 +339,10 @@ async def critic_node(state: AgentState) -> dict[str, Any]:
     agent = CriticAgent()
     updated_hypotheses = await agent.critique(state)
 
+    # The critic adjusts status, confidence and notes in state only; without
+    # this the stored hypotheses stay "open" with no critique recorded.
+    await _update_hypotheses_in_db(updated_hypotheses)
+
     await _emit_event(state.investigation_id, "critic.completed", {
         "hypotheses_reviewed": len(state.hypotheses),
         "rejected": sum(1 for h in updated_hypotheses if h.status == "rejected"),
@@ -361,9 +361,18 @@ async def decision_node(state: AgentState) -> dict[str, Any]:
     agent = DecisionAgent()
     result = await agent.decide(state)
 
+    # Findings live only in graph state otherwise, so the findings table (and
+    # everything reading it: the API, the dashboard, evaluation) stays empty.
+    new_findings = [
+        f for f in result.get("findings", [])
+        if f.id not in {existing.id for existing in state.findings}
+    ]
+    await _save_findings_to_db(state.investigation_id, new_findings)
+
     await _emit_event(state.investigation_id, "decision.made", {
         "decision": result["decision"],
         "confidence": result.get("confidence", 0),
+        "findings": len(new_findings),
     })
 
     return result
@@ -375,18 +384,30 @@ async def report_generation_node(state: AgentState) -> dict[str, Any]:
 
     report = await generate_report(state)
 
-    # Save to database
-    await _update_investigation_db(state.investigation_id, {
-        "status": "completed",
-        "completed_at": datetime.now(UTC),
+    # A remediation run continues into proposal and approval, so reporting
+    # "completed" here would be wrong — the investigation is still in flight.
+    remediation_follows = (
+        state.mode == "remediation"
+        or state.metadata.get("request_remediation", False)
+    )
+
+    updates: dict[str, Any] = {
         "confidence": report.get("confidence", 0),
         "final_report": report,
-    })
+    }
+    if not remediation_follows:
+        updates["status"] = "completed"
+        updates["completed_at"] = datetime.now(UTC)
+    await _update_investigation_db(state.investigation_id, updates)
 
-    await _emit_event(state.investigation_id, "investigation.completed", {
-        "confidence": report.get("confidence", 0),
-        "findings_count": len(state.findings),
-    })
+    await _emit_event(
+        state.investigation_id,
+        "report.generated" if remediation_follows else "investigation.completed",
+        {
+            "confidence": report.get("confidence", 0),
+            "findings_count": len(state.findings),
+        },
+    )
 
     return {
         "final_report": report,
@@ -466,7 +487,9 @@ async def human_approval_node(state: AgentState) -> dict[str, Any]:
 
 
 async def remediation_executor_node(state: AgentState) -> dict[str, Any]:
-    """Node: Execute the approved remediation in an isolated branch."""
+    """Node: Apply the approved patch on an isolated branch."""
+    from app.services.remediation_service import apply_remediation
+
     logger.info(
         "Executing remediation",
         investigation_id=state.investigation_id,
@@ -477,19 +500,95 @@ async def remediation_executor_node(state: AgentState) -> dict[str, Any]:
         logger.info("Remediation rejected by human")
         return {"current_phase": "complete"}
 
-    # TODO Phase 7: Implement actual patch application
+    proposal = state.remediation_proposal
+    patch = getattr(proposal, "patch_content", None) if proposal else None
+    workspace = state.metadata.get("workspace_path", ".")
+
+    if not patch:
+        await _emit_event(state.investigation_id, "remediation.skipped", {
+            "reason": "No patch content in the proposal",
+        })
+        return {"current_phase": "complete"}
+
     await _emit_event(state.investigation_id, "remediation.executing", {
         "status": "started",
+        "workspace": workspace,
     })
 
-    return {"current_phase": "verification"}
+    result = await apply_remediation(workspace, patch, state.investigation_id)
+
+    if not result.get("applied"):
+        await _emit_event(state.investigation_id, "remediation.failed", {
+            "error": result.get("error"),
+        })
+        logger.warning(
+            "Patch did not apply",
+            investigation_id=state.investigation_id,
+            error=result.get("error"),
+        )
+        # Nothing was changed, so there is nothing to verify.
+        return {
+            "current_phase": "complete",
+            "remediation_result": result,
+        }
+
+    await _emit_event(state.investigation_id, "remediation.applied", {
+        "branch": result.get("branch"),
+        "files_changed": result.get("files_changed", []),
+    })
+
+    return {
+        "current_phase": "verification",
+        "remediation_result": result,
+    }
 
 
 async def verification_node(state: AgentState) -> dict[str, Any]:
-    """Node: Verify the applied remediation by running tests."""
+    """Node: Verify the applied patch by running the workspace test suite."""
+    from app.services.remediation_service import (
+        rollback_remediation,
+        verify_remediation,
+    )
+
     logger.info("Running verification", investigation_id=state.investigation_id)
-    # TODO Phase 7: Implement test-based verification
-    return {"current_phase": "complete"}
+
+    result = state.remediation_result or {}
+    if not result.get("applied"):
+        return {"current_phase": "complete"}
+
+    workspace = state.metadata.get("workspace_path", ".")
+    verification = await verify_remediation(workspace)
+
+    await _emit_event(state.investigation_id, "verification.completed", {
+        "ran": verification["ran"],
+        "passed": verification["passed"],
+        "summary": verification["summary"],
+    })
+
+    # A patch that breaks the suite must not be left behind.
+    if verification["ran"] and not verification["passed"]:
+        await rollback_remediation(
+            workspace, result.get("branch", ""), result.get("original_branch", "")
+        )
+        await _emit_event(state.investigation_id, "remediation.rolled_back", {
+            "reason": "Verification failed",
+        })
+        logger.warning(
+            "Remediation rolled back after failing verification",
+            investigation_id=state.investigation_id,
+        )
+
+    logger.info(
+        "Verification finished",
+        investigation_id=state.investigation_id,
+        ran=verification["ran"],
+        passed=verification["passed"],
+    )
+
+    return {
+        "current_phase": "complete",
+        "verification_result": verification,
+    }
 
 
 async def error_recovery_node(state: AgentState) -> dict[str, Any]:
@@ -1024,6 +1123,59 @@ async def _save_evidence_to_db(investigation_id: str, items: list) -> None:
             await db.commit()
     except Exception as exc:
         logger.error("Failed to save evidence to DB", error=str(exc))
+
+
+async def _save_findings_to_db(investigation_id: str, findings: list) -> None:
+    """Persist findings produced by the decision agent."""
+    if not findings:
+        return
+    from app.db.database import AsyncSessionLocal
+    from app.db.models import Finding
+
+    try:
+        async with AsyncSessionLocal() as db:
+            for f in findings:
+                db.add(Finding(
+                    id=f.id,
+                    investigation_id=investigation_id,
+                    claim=f.claim,
+                    confidence=f.confidence,
+                    confidence_tier=f.confidence_tier,
+                    evidence_ids=list(f.evidence_ids or []),
+                    severity=f.severity,
+                    category=f.category,
+                    is_root_cause=f.is_root_cause,
+                ))
+            await db.commit()
+    except Exception as exc:
+        logger.error("Failed to save findings to DB", error=str(exc))
+
+
+async def _update_hypotheses_in_db(hypotheses: list) -> None:
+    """Write critique results (status, confidence, notes) onto stored rows."""
+    if not hypotheses:
+        return
+    from sqlalchemy import select
+
+    from app.db.database import AsyncSessionLocal
+    from app.db.models import Hypothesis
+
+    try:
+        async with AsyncSessionLocal() as db:
+            ids = [h.id for h in hypotheses]
+            result = await db.execute(select(Hypothesis).where(Hypothesis.id.in_(ids)))
+            stored = {row.id: row for row in result.scalars().all()}
+            for h in hypotheses:
+                row = stored.get(h.id)
+                if not row:
+                    continue
+                row.status = h.status
+                row.confidence = h.confidence
+                row.confidence_tier = h.confidence_tier
+                row.critique_notes = h.critique_notes
+            await db.commit()
+    except Exception as exc:
+        logger.error("Failed to update hypotheses in DB", error=str(exc))
 
 
 async def _save_tasks_to_db(investigation_id: str, tasks: list[PlannedTask]) -> None:
